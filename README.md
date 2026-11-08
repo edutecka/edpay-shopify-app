@@ -1,30 +1,72 @@
-# EDPay Shopify Payments App
+# Aplicação de Pagamentos EDPay para Shopify
 
-[![Shopify](https://img.shields.io/badge/Shopify-Hosted%20Payment%20SDK-blue.svg)](https://shopify.com)
-[![Status](https://img.shields.io/badge/Status-Coming%20Soon-amber.svg)](https://edpay.co.mz)
+[![Licença: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Shopify Payments](https://img.shields.io/badge/Shopify-Payments%20App-95BF47.svg)](https://shopify.com)
+[![Multi-Gateway](https://img.shields.io/badge/EDPay-Multi--Gateway-0051FA.svg)](https://edpay.co.mz)
 
-Aplicativo oficial da **EDPay** para integração com lojas Shopify em Moçambique. Permite aos clientes pagarem as suas encomendas através de:
-- Carteiras Móveis: **M-Pesa** (Vodacom) e **e-Mola** (Movitel)
-- Cartões de Débito e Crédito: **Visa** e **Mastercard** com 3DS
-- Carteiras Digitais: **Apple Pay** e **Google Pay**
-- Referência Bancária: **Millennium BIM** / SIMO
+Aplicação backend oficial da **EDPay** baseada na API **Shopify Payments Apps (GraphQL)**, permitindo que lojistas da Shopify em Moçambique processem pagamentos em Meticais (MZN) através de **M-Pesa**, **e-Mola**, **Cartões Visa / Mastercard** e **Transferência Bancária**.
 
 ---
 
-## Arquitetura
+## 🏗️ Arquitetura
 
-O aplicativo utiliza o modelo **Offsite Redirect / Hosted Payment SDK** do Shopify. O comprador escolhe a EDPay no checkout do Shopify, é redirecionado para a página segura de pagamento alojada pela EDPay e, após autorização (ou inserção de PIN USSD), regressa automaticamente à página de confirmação de encomenda (`thank_you` page).
+```
+Shopify Checkout (Buyer)
+    │
+    ▼
+POST /payment-session (EDPay Shopify Backend)
+    │
+    ├──> EDPay Core API (Gera link de checkout hospedado)
+    │
+    ▼
+Cliente paga via M-Pesa / e-Mola / Cartão
+    │
+    ▼
+Webhook EDPay (POST /webhook/edpay com HMAC-SHA256)
+    │
+    └──> GraphQL Mutation: paymentSessionResolve(id)
+         └──> Shopify marca encomenda como Paga ("Paid")
+```
 
 ---
 
-## Prazos e Condições Comerciais
+## 🚀 Como Executar
 
-- **Tarifa Unificada**: 6,00% em Meticais (MZN) sem custos fixos de adesão.
-- **Liquidação Bancária**: Transferência bancária automática de 2 a 7 dias úteis.
+### 1. Pré-requisitos
+- Node.js 18+
+- Conta de Parceiro Shopify (Shopify Partner Dashboard) com uma Payments Extension registrada.
+- Conta de Comerciante na [EDPay](https://edpay.co.mz).
+
+### 2. Configuração de Variáveis de Ambiente
+Crie um arquivo `.env` na raiz do projeto:
+
+```ini
+PORT=3000
+APP_URL=https://seu-servidor-edpay.com
+EDPAY_PUBLIC_KEY=pk_live_...
+EDPAY_PRIVATE_KEY=sk_live_...
+EDPAY_WEBHOOK_SECRET=whsec_...
+EDPAY_API_URL=https://api-pay.edutecka.com
+SHOPIFY_API_KEY=shpa_...
+SHOPIFY_API_SECRET=shpss_...
+```
+
+### 3. Instalação e Execução
+```bash
+npm install
+npm start
+```
 
 ---
 
-## Suporte
+## 🔗 Endpoints do Serviço
 
-- Documentação: [https://docs.edpay.co.mz/plugins/shopify](https://docs.edpay.co.mz/plugins/shopify)
-- Engenharia: `dev@edutecka.com`
+- `GET /health` — Monitoramento de integridade da aplicação.
+- `POST /payment-session` — Endpoint chamado pelo Shopify Checkout para iniciar a cobrança.
+- `POST /webhook/edpay` — Listener seguro para webhooks da EDPay (assinado via `X-EDPay-Signature`).
+
+---
+
+## 📄 Licença
+
+MIT License. Consulte `LICENSE` para detalhes.
