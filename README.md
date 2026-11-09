@@ -1,72 +1,107 @@
-# Aplicação de Pagamentos EDPay para Shopify
+# EDPay Shopify payments integration preview
 
-[![Licença: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Shopify Payments](https://img.shields.io/badge/Shopify-Payments%20App-95BF47.svg)](https://shopify.com)
-[![Multi-Gateway](https://img.shields.io/badge/EDPay-Multi--Gateway-0051FA.svg)](https://edpay.co.mz)
+This repository contains an official integration preview (beta), not a production-ready Shopify payments app. The Node.js service can create an EDPay hosted payment link and receive an EDPay webhook, but it does not finish Shopify's payment-session flow.
 
-Aplicação backend oficial da **EDPay** baseada na API **Shopify Payments Apps (GraphQL)**, permitindo que lojistas da Shopify em Moçambique processem pagamentos em Meticais (MZN) através de **M-Pesa**, **e-Mola**, **Cartões Visa / Mastercard** e **Transferência Bancária**.
+> **Important limitation:** The webhook handler only logs that it would call Shopify's GraphQL `paymentSessionResolve`; it does not make that call or resolve/reject the payment session. Shopify request authentication, durable session/order mapping, and return/cancel handlers are also not implemented. Do not use this preview to accept live payments or treat a webhook acknowledgement as a completed Shopify payment.
 
----
+## What the current service does
 
-## 🏗️ Arquitetura
+- `GET /health` returns a service health response.
+- `POST /payment-session` expects an `id`, `amount`, `currency`, and optionally `customer.email`. It creates an EDPay hosted payment link and returns `{ "redirect_url": "..." }`.
+- `POST /webhook/edpay` accepts an EDPay webhook and checks its signature only when a webhook secret is configured. A successful payment event is logged, but is not resolved with Shopify.
 
-```
-Shopify Checkout (Buyer)
-    │
-    ▼
-POST /payment-session (EDPay Shopify Backend)
-    │
-    ├──> EDPay Core API (Gera link de checkout hospedado)
-    │
-    ▼
-Cliente paga via M-Pesa / e-Mola / Cartão
-    │
-    ▼
-Webhook EDPay (POST /webhook/edpay com HMAC-SHA256)
-    │
-    └──> GraphQL Mutation: paymentSessionResolve(id)
-         └──> Shopify marca encomenda como Paga ("Paid")
-```
+The payment-session handler delegates payment-method choice to the hosted EDPay link; the incoming `payment_method` value is not currently used. The service generates `/shopify/return` and `/shopify/cancel` URLs from `APP_URL`, but this repository does not implement those routes.
 
----
+## Requirements
 
-## 🚀 Como Executar
+- Node.js 18 or later (the service uses the built-in `fetch` API)
+- npm
+- EDPay partner API keys and an EDPay webhook signing secret
+- A public HTTPS development URL/tunnel if sending callbacks to a local service
 
-### 1. Pré-requisitos
-- Node.js 18+
-- Conta de Parceiro Shopify (Shopify Partner Dashboard) com uma Payments Extension registrada.
-- Conta de Comerciante na [EDPay](https://edpay.co.mz).
+## Install and run locally
 
-### 2. Configuração de Variáveis de Ambiente
-Crie um arquivo `.env` na raiz do projeto:
-
-```ini
-PORT=3000
-APP_URL=https://seu-servidor-edpay.com
-EDPAY_PUBLIC_KEY=pk_live_...
-EDPAY_PRIVATE_KEY=sk_live_...
-EDPAY_WEBHOOK_SECRET=whsec_...
-EDPAY_API_URL=https://api-pay.edutecka.com
-SHOPIFY_API_KEY=shpa_...
-SHOPIFY_API_SECRET=shpss_...
-```
-
-### 3. Instalação e Execução
 ```bash
+git clone https://github.com/edutecka/edpay-shopify-app.git
+cd edpay-shopify-app
 npm install
-npm start
 ```
 
----
+Create a local `.env` file and do not commit it:
 
-## 🔗 Endpoints do Serviço
+```dotenv
+PORT=3000
+APP_URL=https://your-public-test-host.example
+EDPAY_API_URL=https://api-pay.edutecka.com
+EDPAY_PUBLIC_KEY=pk_test_...
+EDPAY_PRIVATE_KEY=sk_test_...
+EDPAY_WEBHOOK_SECRET=your_webhook_secret
+```
 
-- `GET /health` — Monitoramento de integridade da aplicação.
-- `POST /payment-session` — Endpoint chamado pelo Shopify Checkout para iniciar a cobrança.
-- `POST /webhook/edpay` — Listener seguro para webhooks da EDPay (assinado via `X-EDPay-Signature`).
+Partner API requests use the `X-EDPay-Public-Key` and `X-EDPay-Private-Key` headers. The implementation defaults `EDPAY_API_URL` to `https://api-pay.edutecka.com`; set it explicitly if your authorized environment uses another EDPay API URL. Set a webhook secret: the current verifier accepts every signature when the secret is absent.
 
----
+The server does not load `.env` automatically. In a POSIX shell, export those values before starting it:
 
-## 📄 Licença
+```bash
+set -a
+. ./.env
+set +a
+npm run dev
+```
 
-MIT License. Consulte `LICENSE` para detalhes.
+The development script runs `node --watch server/index.js`. For a non-watch start, use `npm start` in the same environment.
+
+## Example payment-session request
+
+For local integration testing only, send the fields consumed by the current handler:
+
+```bash
+curl -X POST "http://localhost:3000/payment-session" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "test-session-10492",
+    "amount": 500.00,
+    "currency": "MZN",
+    "customer": { "email": "customer@example.com" }
+  }'
+```
+
+The service returns a `redirect_url` from the EDPay payment-link response. This endpoint is a development scaffold, not a Shopify-authenticated or Shopify-certified endpoint. Do not expose it as a live Shopify payment integration.
+
+## Work required before production use
+
+- Implement Shopify request authentication and validate payment-session payloads.
+- Resolve and reject/cancel payment sessions using Shopify's Payments Apps GraphQL API.
+- Persist idempotency and session-to-order mappings; handle duplicate events and failures safely.
+- Implement and secure return/cancel handling, and add automated security and integration tests.
+- Complete applicable Shopify review, certification, and operational requirements.
+
+## Documentation
+
+- [Shopify payments app documentation](https://shopify.dev/docs/apps/build/payments)
+- [EDPay API payments](https://docs-pay.edutecka.com/api/payments/)
+- [EDPay webhooks](https://docs-pay.edutecka.com/api/webhooks/)
+- [EDPay SDK integration guide](https://docs-pay.edutecka.com/sdks/)
+
+## License
+
+MIT. See [LICENSE](LICENSE).
+
+## Official SDK repositories
+
+- [JavaScript / TypeScript](https://github.com/edutecka/edpay-javascript-sdk)
+- [Python](https://github.com/edutecka/edpay-python-sdk)
+- [PHP](https://github.com/edutecka/edpay-php-sdk)
+- [Java](https://github.com/edutecka/edpay-java-sdk)
+- [.NET](https://github.com/edutecka/edpay-dot-net-sdk)
+
+## Other official e-commerce plugin repositories
+
+These are integration previews; consult each repository for its current implementation status and limitations.
+
+- [WooCommerce (WordPress)](https://github.com/edutecka/edpay-woocommerce-plugin)
+- [Magento / Adobe Commerce](https://github.com/edutecka/edpay-magento2-module)
+- [PrestaShop](https://github.com/edutecka/edpay-prestashop-module)
+- [OpenCart](https://github.com/edutecka/edpay-opencart-extension)
+- [WHMCS](https://github.com/edutecka/edpay-whmcs-gateway)
+- [Shopify](https://github.com/edutecka/edpay-shopify-app)
