@@ -1,17 +1,18 @@
-# Roadmap & Plano de Arquitetura - EDPay Shopify App
+# Roadmap and Architecture Plan - EDPay Shopify App
 
-## Fases de Desenvolvimento
+## Development Phases
 
-### Fase 1: Arquitetura & Especificação (Concluído)
-- [x] Definição do fluxo Hosted Payment SDK / Offsite Redirect.
-- [x] Mapeamento de moedas base (`MZN`) e conversão para moedas estrangeiras.
-- [x] Especificação de parâmetros do checkout session.
+### Phase 1: Architecture and Specification (Complete)
+- [x] Define the hosted payment and offsite redirect flow.
+- [x] Set `MZN` as the default currency.
+- [x] Specify the checkout-session parameters.
 
-### Fase 2: Backend de Integração & Assinatura de Callbacks (Em Desenvolvimento)
-- [ ] Servidor proxy em Node.js / TypeScript com verificação HMAC SHA-256 do Shopify.
-- [ ] Endpoint de redirect para a EDPay Hosted Checkout.
-- [ ] Handler de retorno com assinatura x_signature do Shopify.
+### Phase 2: Integration Backend and Callback Signatures (In Progress)
+- [ ] Node.js/TypeScript proxy server with Shopify HMAC-SHA256 verification.
+- [ ] Redirect endpoint for EDPay Hosted Checkout.
+- [ ] Return handler with Shopify `x_signature` verification.
+- [ ] Define and implement foreign-currency conversion; the current client forwards the supplied currency and scales the amount by 100 without conversion.
 
-### Fase 3: Homologação & Publicação
-- [ ] Submissão do aplicativo na Shopify App Store.
-- [ ] Testes de conformidade e segurança PCI-DSS SAQ-A.
+### Phase 3: Validation and Release
+- [ ] Submit the app to the Shopify App Store.
+- [ ] Complete PCI DSS SAQ A compliance testing.

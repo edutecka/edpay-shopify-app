@@ -1,49 +1,121 @@
 const crypto = require("crypto");
+const sessionStore = require("./session-store");
 
 class EDPayClient {
-  constructor({ publicKey, privateKey, webhookSecret, baseUrl = "https://api-pay.edutecka.com" }) {
-    this.publicKey = publicKey;
-    this.privateKey = privateKey;
+  constructor({ publicKey, privateKey, webhookSecret, webhookToleranceSeconds = 300, baseUrl = "https://api-pay.edutecka.com" }) {
+    const normalizedPublicKey = typeof publicKey === "string" ? publicKey.trim() : "";
+    const normalizedPrivateKey = typeof privateKey === "string" ? privateKey.trim() : "";
+    const publicMode = normalizedPublicKey.match(/^pk_(test|live)_[a-fA-F0-9]{24}$/)?.[1] ?? null;
+    const privateMode = normalizedPrivateKey.match(/^sk_(test|live)_[a-fA-F0-9]{64}$/)?.[1] ?? null;
+    if (!publicMode || !privateMode || publicMode !== privateMode) {
+      throw new Error("EDPay requires a valid public and private API key pair from the same environment.");
+    }
+    this.publicKey = normalizedPublicKey;
+    this.privateKey = normalizedPrivateKey;
     this.webhookSecret = webhookSecret;
+    this.webhookToleranceSeconds = Number.isInteger(webhookToleranceSeconds) && webhookToleranceSeconds >= 0
+      ? webhookToleranceSeconds
+      : 300;
     this.baseUrl = baseUrl.replace(/\/+$/, "");
   }
 
-  async createPaymentLink({ id, amount, currency, title, customerEmail, returnUrl, cancelUrl }) {
-    const response = await fetch(`${this.baseUrl}/v1/core/payment-links`, {
+  async createPaymentLink({ id, sessionGid, amountMinor, currency }) {
+    const orderKey = crypto.createHash("sha256").update(String(id)).digest("hex").slice(0, 32);
+    const headers = {
+      "Content-Type": "application/json",
+      "X-EDPay-Public-Key": this.publicKey,
+      "X-EDPay-Private-Key": this.privateKey,
+    };
+    const linkResponse = await fetch(`${this.baseUrl}/v1/payment-links`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-EDPay-Public-Key": this.publicKey,
-        "X-EDPay-Private-Key": this.privateKey,
-        "Idempotency-Key": `shopify-${id}-${Date.now()}`,
-      },
-      body: JSON.stringify({
-        title: title || `Shopify Order #${id}`,
-        amount: Math.round(amount * 100), // in centavos
-        currency: currency || "MZN",
-        metadata: {
-          shopify_payment_session_id: id,
-          customer_email: customerEmail,
-        },
-        success_url: returnUrl,
-        cancel_url: cancelUrl,
-      }),
+      headers: { ...headers, "Idempotency-Key": `shopify-${orderKey}-link-create` },
+      body: JSON.stringify({ amount_minor: amountMinor, currency }),
     });
 
-    if (!response.ok) {
-      const err = await response.text();
-      throw new Error(`EDPay API error (HTTP ${response.status}): ${err}`);
+    if (!linkResponse.ok) {
+      throw new Error(`EDPay payment-link API error (HTTP ${linkResponse.status})`);
     }
-
-    const data = await response.json();
-    return data.data?.hosted_url || data.data?.checkout_url;
+    const link = await linkResponse.json();
+    const paymentLinkId = link.data?.id;
+    if (typeof paymentLinkId !== "string" || !paymentLinkId) throw new Error("EDPay did not return a payment-link ID");
+    const sessionResponse = await fetch(`${this.baseUrl}/v1/checkout/sessions`, {
+      method: "POST",
+      headers: { ...headers, "Idempotency-Key": `shopify-${orderKey}-checkout-session` },
+      body: JSON.stringify({ payment_link_id: paymentLinkId }),
+    });
+    if (!sessionResponse.ok) throw new Error(`EDPay checkout-session API error (HTTP ${sessionResponse.status})`);
+    const session = await sessionResponse.json();
+    const token = session.data?.token;
+    if (typeof token !== "string" || !token) throw new Error("EDPay did not return a checkout-session token");
+    const hostedUrl = new URL("https://pay.edutecka.com/pay");
+    hostedUrl.searchParams.set("token", token);
+    hostedUrl.searchParams.set("pk", this.publicKey);
+    await sessionStore.save(paymentLinkId, String(sessionGid), amountMinor, currency);
+    return { url: hostedUrl.toString(), paymentLinkId, amountMinor, currency };
   }
 
-  verifyWebhookSignature(rawBody, signature) {
-    if (!this.webhookSecret) return true;
-    const hmac = crypto.createHmac("sha256", this.webhookSecret);
-    const expected = hmac.update(rawBody).digest("hex");
-    return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature || ""));
+  async shopifyMutation(query, variables) {
+    const shop = process.env.SHOPIFY_SHOP_DOMAIN;
+    const token = process.env.SHOPIFY_ACCESS_TOKEN;
+    const version = process.env.SHOPIFY_PAYMENTS_API_VERSION || "2026-01";
+    if (!shop || !token || !/^\d{4}-\d{2}$/.test(version)) {
+      throw new Error("Shopify Payments API credentials are not configured");
+    }
+    const response = await fetch(`https://${shop}/payments_apps/api/${version}/graphql.json`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": token },
+      body: JSON.stringify({ query, variables }),
+    });
+    const result = await response.json();
+    if (!response.ok || result.errors?.length) throw new Error("Shopify Payments API request failed");
+    return result.data;
+  }
+
+  async finalizeShopifySession(sessionId, succeeded, eventType = "payment.failed") {
+    const mutation = succeeded
+      ? `mutation Resolve($id: ID!) { paymentSessionResolve(id: $id) { paymentSession { id } userErrors { message } } }`
+      : `mutation Reject($id: ID!, $reason: PaymentSessionRejectionReasonInput!) { paymentSessionReject(id: $id, reason: $reason) { paymentSession { id } userErrors { message } } }`;
+    const variables = succeeded
+      ? { id: sessionId }
+      : { id: sessionId, reason: {
+        code: eventType === "payment.cancelled" ? "CANCELLED_PAYMENT" : "PROCESSING_ERROR",
+        source: "NETWORK",
+        merchantMessage: eventType === "payment.cancelled" ? "Payment was cancelled." : "Payment was not completed.",
+      } };
+    const data = await this.shopifyMutation(mutation, variables);
+    const result = succeeded ? data.paymentSessionResolve : data.paymentSessionReject;
+    if (!result?.paymentSession || result.userErrors?.length) throw new Error("Shopify could not finalize the payment session");
+    return true;
+  }
+
+  verifyWebhookSignature(rawBody, signatureHeader, now = Math.floor(Date.now() / 1000)) {
+    if (!Buffer.isBuffer(rawBody) || rawBody.length === 0 || !this.webhookSecret || !signatureHeader) return false;
+
+    const fields = {};
+    for (const field of signatureHeader.split(",")) {
+      const separator = field.indexOf("=");
+      if (separator < 0) continue;
+      const key = field.slice(0, separator).trim();
+      const value = field.slice(separator + 1).trim();
+      if (key === "t" || key === "v1") {
+        if (Object.prototype.hasOwnProperty.call(fields, key)) return false;
+        fields[key] = value;
+      }
+    }
+
+    if (!/^\d+$/.test(fields.t || "") || !/^[a-f\d]{64}$/i.test(fields.v1 || "") || !Number.isSafeInteger(now)) {
+      return false;
+    }
+    const signedAt = Number(fields.t);
+    if (!Number.isSafeInteger(signedAt) || Math.abs(now - signedAt) > this.webhookToleranceSeconds) return false;
+
+    const expected = crypto.createHmac("sha256", this.webhookSecret)
+      .update(fields.t, "ascii")
+      .update(".", "ascii")
+      .update(rawBody)
+      .digest();
+    const received = Buffer.from(fields.v1, "hex");
+    return received.length === expected.length && crypto.timingSafeEqual(expected, received);
   }
 }
 

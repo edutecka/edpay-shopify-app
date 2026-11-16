@@ -1,7 +1,7 @@
 {
   "name": "edpay-shopify-app",
   "version": "1.0.0",
-  "description": "EDPay Payments App Extension for Shopify (M-Pesa, e-Mola, Cards, Bank Transfer)",
+  "description": "EDPay hosted payments integration preview for Shopify",
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
