@@ -1,6 +1,6 @@
 {
   "name": "edpay-shopify-app",
-  "version": "1.0.0",
+  "version": "1.6.0",
   "description": "EDPay hosted payments integration preview for Shopify",
   "main": "server/index.js",
   "scripts": {
