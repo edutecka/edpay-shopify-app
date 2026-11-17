@@ -56,7 +56,7 @@ app.post("/payment-session", async (req, res) => {
       || !String(process.env.EDPAY_PRIVATE_KEY || "").startsWith(test ? "sk_test_" : "sk_live_")) {
       return res.status(400).json({ error: "Invalid Shopify payment session" });
     }
-    const checkout = await client.createPaymentLink({
+    const checkout = await client.createPayment({
       id,
       sessionGid: gid,
       amountMinor,
@@ -85,39 +85,39 @@ app.post("/webhook/edpay", async (req, res) => {
   const event = req.body;
   if (event.type === "payment.succeeded") {
     const payment = event.data;
-    const linkId = payment.payment_link_id;
-    const mapping = typeof linkId === "string" ? await sessionStore.get(linkId) : null;
+    const reference = payment.reference;
+    const mapping = typeof reference === "string" ? await sessionStore.get(reference) : null;
     if (!mapping || payment.status !== "succeeded" || !payment.id
       || Number(payment.amount_minor) !== mapping.amountMinor
       || String(payment.currency).toUpperCase() !== String(mapping.currency).toUpperCase()) {
-      return res.status(409).json({ error: "Payment link, status, amount, or currency mismatch" });
+      return res.status(409).json({ error: "Payment reference, status, amount, or currency mismatch" });
     }
-    if (!await sessionStore.claim(linkId, payment.id)) {
-      return res.status(409).json({ error: "Payment link already processed" });
+    if (!await sessionStore.claim(reference, payment.id)) {
+      return res.status(409).json({ error: "Payment already processed" });
     }
     try {
       await client.finalizeShopifySession(mapping.sessionId, true, event.type);
-      await sessionStore.markResolved(linkId, payment.id);
+      await sessionStore.markResolved(reference, payment.id);
     } catch (error) {
-      await sessionStore.release(linkId, payment.id);
+      await sessionStore.release(reference, payment.id);
       console.error("Shopify payment finalization failed:", error.message);
       return res.status(502).json({ error: "Unable to finalize Shopify payment session" });
     }
   } else if (event.type === "payment.failed" || event.type === "payment.cancelled") {
     const payment = event.data || {};
-    const linkId = payment.payment_link_id;
-    const mapping = typeof linkId === "string" ? await sessionStore.get(linkId) : null;
+    const reference = payment.reference;
+    const mapping = typeof reference === "string" ? await sessionStore.get(reference) : null;
     if (!mapping || payment.status !== "failed" && payment.status !== "cancelled" || !payment.id
       || Number(payment.amount_minor) !== mapping.amountMinor
       || String(payment.currency).toUpperCase() !== String(mapping.currency).toUpperCase()) {
-      return res.status(409).json({ error: "Payment link or status mismatch" });
+      return res.status(409).json({ error: "Payment reference or status mismatch" });
     }
-    if (!await sessionStore.claim(linkId, payment.id)) return res.status(409).json({ error: "Payment link already processed" });
+    if (!await sessionStore.claim(reference, payment.id)) return res.status(409).json({ error: "Payment already processed" });
     try {
       await client.finalizeShopifySession(mapping.sessionId, false, event.type);
-      await sessionStore.markResolved(linkId, payment.id);
+      await sessionStore.markResolved(reference, payment.id);
     } catch (error) {
-      await sessionStore.release(linkId, payment.id);
+      await sessionStore.release(reference, payment.id);
       console.error("Shopify payment rejection failed:", error.message);
       return res.status(502).json({ error: "Unable to finalize Shopify payment session" });
     }

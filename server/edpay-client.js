@@ -19,39 +19,36 @@ class EDPayClient {
     this.baseUrl = baseUrl.replace(/\/+$/, "");
   }
 
-  async createPaymentLink({ id, sessionGid, amountMinor, currency }) {
+  async createPayment({ id, sessionGid, amountMinor, currency }) {
     const orderKey = crypto.createHash("sha256").update(String(id)).digest("hex").slice(0, 32);
     const headers = {
       "Content-Type": "application/json",
       "X-EDPay-Public-Key": this.publicKey,
       "X-EDPay-Private-Key": this.privateKey,
     };
-    const linkResponse = await fetch(`${this.baseUrl}/v1/payment-links`, {
+    const paymentResponse = await fetch(`${this.baseUrl}/v1/payments`, {
       method: "POST",
-      headers: { ...headers, "Idempotency-Key": `shopify-${orderKey}-link-create` },
-      body: JSON.stringify({ amount_minor: amountMinor, currency }),
+      headers: { ...headers, "Idempotency-Key": `shopify-${orderKey}-payment-create` },
+      body: JSON.stringify({ amount_minor: amountMinor, currency, reference: String(id), description: `Shopify payment ${id}` }),
     });
-
-    if (!linkResponse.ok) {
-      throw new Error(`EDPay payment-link API error (HTTP ${linkResponse.status})`);
-    }
-    const link = await linkResponse.json();
-    const paymentLinkId = link.data?.id;
-    if (typeof paymentLinkId !== "string" || !paymentLinkId) throw new Error("EDPay did not return a payment-link ID");
-    const sessionResponse = await fetch(`${this.baseUrl}/v1/checkout/sessions`, {
+    if (!paymentResponse.ok) throw new Error(`EDPay payment API error (HTTP ${paymentResponse.status})`);
+    const paymentResult = await paymentResponse.json();
+    const paymentId = paymentResult.data?.id;
+    if (typeof paymentId !== "string" || !paymentId) throw new Error("EDPay did not return a payment ID");
+    const sessionResponse = await fetch(`${this.baseUrl}/v1/payments/${encodeURIComponent(paymentId)}/public-checkout`, {
       method: "POST",
-      headers: { ...headers, "Idempotency-Key": `shopify-${orderKey}-checkout-session` },
-      body: JSON.stringify({ payment_link_id: paymentLinkId }),
+      headers: { ...headers, "Idempotency-Key": `shopify-${orderKey}-public-checkout` },
+      body: JSON.stringify({}),
     });
-    if (!sessionResponse.ok) throw new Error(`EDPay checkout-session API error (HTTP ${sessionResponse.status})`);
+    if (!sessionResponse.ok) throw new Error(`EDPay public-checkout API error (HTTP ${sessionResponse.status})`);
     const session = await sessionResponse.json();
-    const token = session.data?.token;
-    if (typeof token !== "string" || !token) throw new Error("EDPay did not return a checkout-session token");
+    const token = session.data?.token ?? session.token;
+    if (typeof token !== "string" || !token) throw new Error("EDPay did not return a checkout token");
     const hostedUrl = new URL("https://pay.edutecka.com/pay");
     hostedUrl.searchParams.set("token", token);
     hostedUrl.searchParams.set("pk", this.publicKey);
-    await sessionStore.save(paymentLinkId, String(sessionGid), amountMinor, currency);
-    return { url: hostedUrl.toString(), paymentLinkId, amountMinor, currency };
+    await sessionStore.save(String(id), String(sessionGid), amountMinor, currency);
+    return { url: hostedUrl.toString(), paymentId, reference: String(id), amountMinor, currency };
   }
 
   async shopifyMutation(query, variables) {

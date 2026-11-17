@@ -14,14 +14,14 @@ async function readStore() {
   }
 }
 
-async function save(linkId, sessionId, amountMinor, currency) {
+async function save(reference, sessionId, amountMinor, currency) {
   writes = writes.catch(() => {}).then(async () => {
     const store = await readStore();
-    const old = store[linkId];
+    const old = store[reference];
     if (old && (old.sessionId !== sessionId || old.amountMinor !== amountMinor || old.currency !== currency)) {
-      throw new Error("Payment-link mapping conflict");
+      throw new Error("Payment mapping conflict");
     }
-    store[linkId] = old || { sessionId, amountMinor, currency, paymentId: null, state: "open" };
+    store[reference] = old || { sessionId, amountMinor, currency, paymentId: null, state: "open" };
     await fs.mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
     const temporary = `${filePath}.${process.pid}.tmp`;
     await fs.writeFile(temporary, JSON.stringify(store), { mode: 0o600 });
@@ -30,15 +30,15 @@ async function save(linkId, sessionId, amountMinor, currency) {
   return writes;
 }
 
-async function get(linkId) {
+async function get(reference) {
   await writes;
-  return (await readStore())[linkId] || null;
+  return (await readStore())[reference] || null;
 }
 
-async function markResolved(linkId, paymentId) {
+async function markResolved(reference, paymentId) {
   writes = writes.catch(() => {}).then(async () => {
     const store = await readStore();
-    const mapping = store[linkId];
+    const mapping = store[reference];
     if (!mapping || mapping.state !== "processing" || mapping.paymentId !== paymentId) return false;
     mapping.paymentId = paymentId;
     mapping.state = "resolved";
@@ -51,10 +51,10 @@ async function markResolved(linkId, paymentId) {
   return writes;
 }
 
-async function release(linkId, paymentId) {
+async function release(reference, paymentId) {
   writes = writes.catch(() => {}).then(async () => {
     const store = await readStore();
-    const mapping = store[linkId];
+    const mapping = store[reference];
     if (!mapping || mapping.state !== "processing" || mapping.paymentId !== paymentId) return false;
     mapping.paymentId = null;
     mapping.state = "open";
@@ -67,10 +67,10 @@ async function release(linkId, paymentId) {
   return writes;
 }
 
-async function claim(linkId, paymentId) {
+async function claim(reference, paymentId) {
   writes = writes.catch(() => {}).then(async () => {
     const store = await readStore();
-    const mapping = store[linkId];
+    const mapping = store[reference];
     if (!mapping || mapping.state !== "open") return false;
     mapping.paymentId = paymentId;
     mapping.state = "processing";

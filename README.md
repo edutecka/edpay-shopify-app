@@ -1,14 +1,14 @@
 # EDPay Shopify payments integration preview
 
-This repository contains an integration preview (beta), not a production-ready or Shopify-certified payments app. The Node.js service creates an EDPay link and checkout session, returns the hosted URL to Shopify's offsite payment-session request, and resolves/rejects the Shopify payment session from a verified EDPay webhook.
+This repository contains an integration preview (beta), not a production-ready or Shopify-certified payments app. The Node.js service creates a payment parent and hosted checkout child, returns the hosted URL to Shopify's offsite payment-session request, and resolves/rejects the Shopify payment session from a verified EDPay webhook.
 
 > **Important limitation:** Shopify's required mTLS and access-token configuration must be provisioned correctly. The local JSON mapping store supports a single Node process only. EDPay's hosted checkout contract does not document a merchant return URL, so this preview cannot guarantee the buyer is redirected back to Shopify after checkout. Do not treat browser redirects or webhook acknowledgements as a substitute for confirmed Shopify state.
 
 ## What the current service does
 
 - `GET /health` returns a service health response.
-- `POST /payment-session` accepts Shopify's `id`, `gid`, `amount`, and `currency` fields over mTLS. It creates the EDPay hosted checkout session, persists payment-link-to-Shopify-session correlation, and returns `{ "redirect_url": "..." }`.
-- `POST /webhook/edpay` verifies EDPay's signature, checks payment-link ID, confirmed status, amount, and currency against the stored mapping, then calls Shopify's Payments Apps GraphQL API to resolve or reject the matching session. Replays and mismatches are rejected.
+- `POST /payment-session` accepts Shopify's `id`, `gid`, `amount`, and `currency` fields over mTLS. It creates the EDPay payment and hosted checkout child, persists reference-to-Shopify-session correlation, and returns `{ "redirect_url": "..." }`.
+- `POST /webhook/edpay` verifies EDPay's signature, checks payment reference, confirmed status, amount, and currency against the stored mapping, then calls Shopify's Payments Apps GraphQL API to resolve or reject the matching session. Replays and mismatches are rejected.
 
 The offsite flow delegates payment-method choice to hosted EDPay checkout. A merchant cancel URL from Shopify is not sent into the EDPay API because its checkout-session schema has no return/cancel fields.
 
@@ -70,7 +70,7 @@ curl --cert /secure/path/shopify-client.crt --key /secure/path/shopify-client.ke
   -d '{"id":"attempt-10492","gid":"gid://shopify/PaymentSession/example","group":"opaque-group","session_id":"opaque-session","amount":"500.00","currency":"MZN","test":true,"merchant_locale":"en","payment_method":{"type":"offsite","data":{"cancel_url":"https://shop.example/checkouts/complete"}},"proposed_at":"2026-11-16T10:00:00Z","kind":"sale"}'
 ```
 
-The service creates a link with `POST /v1/payment-links`, then a session with `POST /v1/checkout/sessions`, using Shopify's stable payment attempt ID for idempotency. It builds the hosted URL from the session token and public key at `https://pay.edutecka.com/pay?token=...&pk=...`.
+The service creates one parent payment with `POST /v1/payments`, then starts hosted checkout for that payment with `POST /v1/payments/{id}/public-checkout`, using Shopify's stable payment attempt ID for idempotency. It builds the hosted URL from the returned opaque token and public key at `https://pay.edutecka.com/pay?token=...&pk=...`.
 
 ## Work required before production use
 
